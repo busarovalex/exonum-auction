@@ -4,16 +4,16 @@ use exonum::{
     messages::Message, storage::Fork,
 };
 
-use super::schema::{Schema, Lot, Bid, ClosedAuction, SecretBid};
+use super::schema::{Schema, Auction, Bid, ClosedAuction, SecretBid};
 use super::service::AUCTION_SERVICE;
 
 #[derive(Debug, Fail)]
 #[repr(u8)]
 pub enum Error {
-    #[fail(display = "Public key already owns a lot")]
-    LotAlreadyExists = 0,
+    #[fail(display = "Public key already owns an auction")]
+    AuctionAlreadyExists = 0,
     #[fail(display = "No lot with such public key")]
-    LotDoesNotExists = 1,
+    AuctionDoesNotExists = 1,
     #[fail(display = "Secret bid verification failed")]
     SecretBidVerificationFailed = 2,
 }
@@ -30,40 +30,51 @@ transactions! {
     pub AuctionTransactions {
         const SERVICE_ID = AUCTION_SERVICE;
 
-        struct TxCreateLot {
+        /// Создает новый аукцион
+        struct TxCreateAuction {
             /// Public key of transaction.
             pub_key: &PublicKey,
         }
 
+        /// Делает ставку на аукционе
         struct TxBid {
             /// Public key of transaction.
             pub_key: &PublicKey,
-            lot_owner: &PublicKey,
+            /// Публичный ключ хозяина аукциона
+            auction_owner: &PublicKey,
+            /// Величина ставки
             value: u64
         }
 
+        /// Создает новый закрытый аукцион
         struct TxCreateClosedAuction {
             /// Public key of transaction.
             pub_key: &PublicKey,
         }
 
+        /// Делает ставку на закрытом аукционе
         struct TxSecretBid {
             /// Public key of transaction.
             pub_key: &PublicKey,
-            lot_owner: &PublicKey,
+            /// Публичный ключ хозяина аукциона
+            auction_owner: &PublicKey,
+            /// Подписанная величина ставки
             value_signature: &Signature
         }
 
+        /// Подтверждает ставку на закрытом аукционе после окончания периода торга
         struct TxProveSecretBid {
             /// Public key of transaction.
             pub_key: &PublicKey,
-            lot_owner: &PublicKey,
+            /// Публичный ключ хозяина аукциона
+            auction_owner: &PublicKey,
+            /// Величина ставки
             value: u64
         }
     }
 }
 
-impl Transaction for TxCreateLot {
+impl Transaction for TxCreateAuction {
     fn verify(&self) -> bool {
         self.verify_signature(self.pub_key())
     }
@@ -72,13 +83,13 @@ impl Transaction for TxCreateLot {
         let owner = self.pub_key();
 
         let mut schema = Schema::new(fork);
-        if schema.lots().get(owner).is_some() {
-            Err(Error::LotAlreadyExists)?;
+        if schema.auctions().get(owner).is_some() {
+            Err(Error::AuctionAlreadyExists)?;
         }
 
-        let entry = Lot::new(owner, Vec::new());
-        schema.add_lot(entry);
-        trace!("TxCreateLot executed");
+        let entry = Auction::new(owner, Vec::new());
+        schema.add_auction(entry);
+        trace!("TxCreateAuction executed");
         Ok(())
     }
 }
@@ -90,14 +101,14 @@ impl Transaction for TxBid {
 
     fn execute(&self, fork: &mut Fork) -> ExecutionResult {
         let bidder = self.pub_key();
-        let lot_owner = self.lot_owner();
+        let auction_owner = self.auction_owner();
         let mut schema = Schema::new(fork);
-        if schema.lots().get(lot_owner).is_none() {
-            Err(Error::LotDoesNotExists)?;
+        if schema.auctions().get(auction_owner).is_none() {
+            Err(Error::AuctionDoesNotExists)?;
         }
 
         let entry = Bid::new(bidder, self.value());
-        schema.bid(lot_owner, entry);
+        schema.bid(auction_owner, entry);
         trace!("TxBid executed");
         Ok(())
     }
@@ -113,7 +124,7 @@ impl Transaction for TxCreateClosedAuction {
 
         let mut schema = Schema::new(fork);
         if schema.closed_auctions().get(owner).is_some() {
-            Err(Error::LotAlreadyExists)?;
+            Err(Error::AuctionAlreadyExists)?;
         }
 
         let entry = ClosedAuction::new(owner, Vec::new());
@@ -130,14 +141,14 @@ impl Transaction for TxSecretBid {
 
     fn execute(&self, fork: &mut Fork) -> ExecutionResult {
         let bidder = self.pub_key();
-        let lot_owner = self.lot_owner();
+        let auction_owner = self.auction_owner();
         let mut schema = Schema::new(fork);
-        if schema.lots().get(lot_owner).is_none() {
-            Err(Error::LotDoesNotExists)?;
+        if schema.auctions().get(auction_owner).is_none() {
+            Err(Error::AuctionDoesNotExists)?;
         }
 
         let entry = SecretBid::new(bidder, self.value_signature(), 0);
-        schema.secret_bid(lot_owner, entry);
+        schema.secret_bid(auction_owner, entry);
         trace!("TxSecretBid executed");
         Ok(())
     }
@@ -150,16 +161,16 @@ impl Transaction for TxProveSecretBid {
 
     fn execute(&self, fork: &mut Fork) -> ExecutionResult {
         let bidder = self.pub_key();
-        let lot_owner = self.lot_owner();
+        let auction_owner = self.auction_owner();
         let mut schema = Schema::new(fork);
-        let auction = schema.closed_auctions().get(lot_owner).ok_or(Error::LotDoesNotExists)?;
+        let auction = schema.closed_auctions().get(auction_owner).ok_or(Error::AuctionDoesNotExists)?;
         let bids = auction.bids();
-        let bid = bids.iter().find(|bid| bid.bidder() == bidder).ok_or(Error::LotDoesNotExists)?;
+        let bid = bids.iter().find(|bid| bid.bidder() == bidder).ok_or(Error::AuctionDoesNotExists)?;
         let encoded_value: Vec<u8> = ::bincode::serialize(&self.value()).unwrap();
 
         if crypto::verify(bid.value_signature(), &encoded_value, bidder) {
             let entry = SecretBid::new(bidder, bid.value_signature(), self.value());
-            schema.secret_bid(lot_owner, entry);
+            schema.secret_bid(auction_owner, entry);
         } else {
             Err(Error::SecretBidVerificationFailed)?;
         }

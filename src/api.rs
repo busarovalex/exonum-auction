@@ -5,8 +5,9 @@ use exonum::{
 };
 
 use super::transactions::AuctionTransactions;
-use super::schema::{Schema, Lot};
+use super::schema::{Schema, Auction};
 
+/// Описывает параметры для 'handle_lot' Endpoint'а
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct LotQuery {
     pub owner: PublicKey,   
@@ -24,11 +25,12 @@ pub struct TransactionResponse {
 pub struct PublicApi;
 
 impl PublicApi {
+    /// Endpoint для получения информации по лоту аукциона
     pub fn handle_lot(state: &ServiceApiState,
-        query: LotQuery,) ->  api::Result<Option<Lot>> {
+        query: LotQuery,) ->  api::Result<Option<Auction>> {
         let snapshot = state.snapshot();
         let schema = Schema::new(&snapshot);
-        Ok(schema.lots().get(&query.owner))
+        Ok(schema.auctions().get(&query.owner))
     }
 
     /// Endpoint for handling transactions.
